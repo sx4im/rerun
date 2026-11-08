@@ -70,6 +70,20 @@ SUPABASE_SECRET_KEY=<Secret key from supabase status>
 Sign-in codes land in Mailpit, at http://localhost:54424. Tell them: this setup is for one person on
 one computer, never for a server reachable from the internet.
 
+**Fedora with SELinux enforcing:** the Supabase CLI mounts the templates in
+`supabase/templates/` without relabeling them, so they keep the `user_home_t` label
+from the checkout and the container cannot read them. Kong answers 403, Auth falls
+back to its default email, and the sign-in email arrives without the six-digit code.
+Relabel the three files, from the repository root:
+
+```bash
+chcon -t container_file_t supabase/templates/confirmation.html supabase/templates/email_change.html supabase/templates/magic_link.html
+```
+
+`node scripts/self-host-check.mjs` fails with this fix while the labels are wrong, so
+run it again after relabeling. Reapply the labels if a checkout or relabel resets
+the files.
+
 **A project on supabase.com:** walk them through it, they do the clicks.
 
 1. Create a free project on https://supabase.com and note the database password.

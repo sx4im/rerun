@@ -6,9 +6,11 @@
 //   node scripts/self-host-check.mjs
 
 import { randomBytes } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 const FILE = '.env'
+const TEMPLATES = ['confirmation.html', 'email_change.html', 'magic_link.html']
 const GENERATED = ['RERUN_ENGINE_API_KEY', 'FOREMAN_HUB_TOKEN_SECRET', 'BOARD_IMAGE_SECRET']
 const REQUIRED = {
     NEXT_PUBLIC_APP_URL: 'the address people open, e.g. http://localhost:3000',
@@ -56,6 +58,12 @@ if (supabaseProblem) {
     process.exit(1)
 }
 
+const templateProblem = emailTemplateProblem(supabaseUrl)
+if (templateProblem) {
+    console.error(`\nx ${templateProblem}\n`)
+    process.exit(1)
+}
+
 console.log(`
 .env is ready and Supabase answers. Next:
   docker compose${/localhost:54421/.test(supabaseUrl) ? ' --profile local-supabase' : ''} up -d --build
@@ -90,4 +98,30 @@ function schemaCommand(url) {
     const projectRef = url.match(/^https:\/\/([a-z0-9]+)\.supabase\.co/)?.[1]
     if (projectRef) return `npx supabase link --project-ref ${projectRef} && npx supabase db push --include-seed`
     return 'npx supabase db push --include-seed --yes --db-url "postgresql://postgres.rerun:<POSTGRES_PASSWORD>@127.0.0.1:5432/postgres?sslmode=disable"'
+}
+
+// With a local Supabase, Auth reads the sign-in templates from supabase/templates/
+// through Kong, which serves them from the container. On a Linux machine with
+// SELinux enforcing, a file checked out under $HOME carries user_home_t, which the
+// container cannot read: Kong answers 403, Auth falls back to its default email,
+// and the sign-in email arrives without the six-digit code. The label is what the
+// container sees, so that is what this reads: a file labeled container_file_t is
+// fine, anything else is not. Anything it cannot tell — no SELinux, no stat, a
+// missing file — it leaves alone, so it only fails on a label it has actually seen.
+function emailTemplateProblem(url) {
+    if (!/127\.0\.0\.1|localhost/.test(url)) return null
+    if (process.platform !== 'linux') return null
+    const enforcing = spawnSync('getenforce', [], { encoding: 'utf8' })
+    if (enforcing.status !== 0 || enforcing.stdout?.trim() !== 'Enforcing') return null
+    const bad = []
+    for (const name of TEMPLATES) {
+        const file = `supabase/templates/${name}`
+        if (!existsSync(file)) continue
+        const label = spawnSync('stat', ['-c', '%C', file], { encoding: 'utf8' })
+        if (label.status !== 0) continue
+        const type = label.stdout.trim().split(':')[2]
+        if (type && type !== 'container_file_t') bad.push({ file, type })
+    }
+    if (!bad.length) return null
+    return `The sign-in email templates carry an SELinux label Kong cannot read, so Kong answers 403 and the sign-in email arrives without the six-digit code: ${bad.map(({ file, type }) => `${file} (${type})`).join(', ')}.\n  Relabel them, from the repository root:\n  chcon -t container_file_t ${bad.map(({ file }) => file).join(' ')}`
 }
