@@ -70,6 +70,18 @@ SUPABASE_SECRET_KEY=<Secret key from supabase status>
 Sign-in codes land in Mailpit, at http://localhost:54424. Tell them: this setup is for one person on
 one computer, never for a server reachable from the internet.
 
+**On Fedora with SELinux enforcing:** the files in `supabase/templates/` are bind-mounted into
+Kong, and SELinux can block Kong from reading them even though the setup looks right: sign-in then
+sends Supabase's default email, without the code. If that happens, relabel the three templates from
+the repository root:
+
+```bash
+chcon -t container_file_t supabase/templates/confirmation.html supabase/templates/email_change.html supabase/templates/magic_link.html
+```
+
+`node scripts/self-host-check.mjs` checks the templates are readable and stops with this fix when
+they are not. The labels may need reapplying if a checkout or relabel resets the files.
+
 **A project on supabase.com:** walk them through it, they do the clicks.
 
 1. Create a free project on https://supabase.com and note the database password.

@@ -5,11 +5,13 @@
 //
 //   node scripts/self-host-check.mjs
 
+import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 const FILE = '.env'
 const GENERATED = ['RERUN_ENGINE_API_KEY', 'FOREMAN_HUB_TOKEN_SECRET', 'BOARD_IMAGE_SECRET']
+const TEMPLATES = ['confirmation', 'email_change', 'magic_link']
 const REQUIRED = {
     NEXT_PUBLIC_APP_URL: 'the address people open, e.g. http://localhost:3000',
     NEXT_PUBLIC_SUPABASE_URL: 'Supabase > Project settings > API > Project URL, or `npx supabase status` (API URL)',
@@ -56,6 +58,12 @@ if (supabaseProblem) {
     process.exit(1)
 }
 
+const templatesProblem = emailTemplatesProblem(supabaseUrl)
+if (templatesProblem) {
+    console.error(`\nx ${templatesProblem}\n`)
+    process.exit(1)
+}
+
 console.log(`
 .env is ready and Supabase answers. Next:
   docker compose${/localhost:54421/.test(supabaseUrl) ? ' --profile local-supabase' : ''} up -d --build
@@ -83,6 +91,33 @@ async function askSupabase(url, secretKey) {
     if (body.code === '42501') return secretKey.startsWith('sb_secret_') ? notThisProject : 'SUPABASE_SECRET_KEY holds the publishable (anon) key: put the secret (service_role) key there, from Supabase > Project settings > API keys'
     if (response.status === 401 || response.status === 403) return notThisProject
     return `Supabase answered ${response.status}: ${body.message ?? 'no detail'}`
+}
+
+// Auth reads the email templates through Kong, which serves them from its own container. On a
+// machine with SELinux enforcing, the bind mount keeps the files' home-directory label, Kong
+// answers 403, and Auth falls back to its default email — while the schema check above still
+// passes. Ask the container itself whether it can read each template; that is the read that fails.
+function emailTemplatesProblem(url) {
+    if (!/:54421\b/.test(url)) return null // a hosted project has no local Kong to ask
+    let names
+    try {
+        names = execFileSync('docker', ['ps', '--format', '{{.Names}}', '--filter', 'name=supabase_kong_'], { stdio: 'pipe', timeout: 10_000 }).toString().trim().split('\n').filter(Boolean)
+    } catch {
+        return null // no Docker here, or the stack is not running: nothing to ask
+    }
+    if (!names.length) return null
+    // ponytail: first Kong container wins; match the one publishing 54421 if several local stacks ever run side by side.
+    const unreadable = []
+    for (const template of TEMPLATES) {
+        try {
+            execFileSync('docker', ['exec', names[0], 'test', '-r', `/home/kong/templates/email/${template}.html`], { stdio: 'pipe', timeout: 10_000 })
+        } catch (error) {
+            if (error?.status === 1) unreadable.push(template)
+        }
+    }
+    if (!unreadable.length) return null
+    const files = unreadable.map((template) => `supabase/templates/${template}.html`)
+    return `Kong cannot read ${unreadable.map((template) => `${template}.html`).join(', ')}: with SELinux enforcing, the bind mount keeps the files' home-directory label, Kong answers 403, and Auth sends its default email without the six-digit code. Relabel ${unreadable.length > 1 ? 'them' : 'it'} from the repository root, then run this check again:\n  chcon -t container_file_t ${files.join(' ')}`
 }
 
 function schemaCommand(url) {
