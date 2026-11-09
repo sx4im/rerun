@@ -6,7 +6,7 @@ const dataDir = mkdtempSync(resolve(tmpdir(), 'rerun-proposal-repo-'))
 process.env.RERUN_DATA_DIR = dataDir
 
 const { describe, expect, it } = await import('vitest')
-const { insertSkillProposal, transitionSkillProposal, getSkillProposal, openSkillProposalForSession } = await import('./skill-proposals.js')
+const { insertSkillProposal, transitionSkillProposal, getSkillProposal, openSkillProposalForSession, findSkillProposalByFingerprint } = await import('./skill-proposals.js')
 
 const id = 'repo-agent'
 
@@ -48,5 +48,20 @@ describe('transitionSkillProposal', () => {
         expect((await openSkillProposalForSession(id, row.sessionId))?.id).toBe(row.id)
         await transitionSkillProposal(id, row.id, ['proposed'], 'dismissed')
         expect(await openSkillProposalForSession(id, row.sessionId)).toBeUndefined()
+    })
+})
+
+describe('findSkillProposalByFingerprint', () => {
+    it('ignores a failed proposal so the same rule can be raised again', async () => {
+        const row = await proposal()
+        expect((await findSkillProposalByFingerprint(id, `fp-${seq}`))?.id).toBe(row.id)
+        await transitionSkillProposal(id, row.id, ['proposed'], 'failed')
+        expect(await findSkillProposalByFingerprint(id, `fp-${seq}`)).toBeUndefined()
+    })
+
+    it('still tombstones a dismissed proposal', async () => {
+        const row = await proposal()
+        await transitionSkillProposal(id, row.id, ['proposed'], 'dismissed')
+        expect((await findSkillProposalByFingerprint(id, `fp-${seq}`))?.id).toBe(row.id)
     })
 })

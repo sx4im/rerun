@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, like } from 'drizzle-orm'
+import { and, desc, eq, inArray, like, ne } from 'drizzle-orm'
 import type { Provider, SkillProposal, SkillProposalMode, SkillProposalStatus } from '@rerun/contracts'
 import { getSystemDb } from '../systemDb.js'
 import { skillProposals, type SkillProposalRow } from '../schema.js'
@@ -75,13 +75,20 @@ export async function listSessionSkillProposals(agentId: string, sessionId: stri
 }
 
 // Every rule that ever joined a proposal keeps its print here, so a proposal carrying three rules
-// still tombstones all three once it is dismissed.
+// still tombstones all three once it is dismissed. A failed row is not a tombstone: the user
+// approved it and the write failed, so the rule must be raisable again instead of blocked forever.
 export async function findSkillProposalByFingerprint(agentId: string, fingerprint: string): Promise<SkillProposalRow | undefined> {
     const { db } = await getSystemDb(agentId)
     const rows = await db
         .select()
         .from(skillProposals)
-        .where(and(eq(skillProposals.agentId, agentId), like(skillProposals.fingerprintsJson, `%"${fingerprint}"%`)))
+        .where(
+            and(
+                eq(skillProposals.agentId, agentId),
+                like(skillProposals.fingerprintsJson, `%"${fingerprint}"%`),
+                ne(skillProposals.status, 'failed'),
+            ),
+        )
         .limit(1)
     return rows[0]
 }

@@ -115,6 +115,19 @@ describe('skill_propose', () => {
         expect(announced).toHaveLength(2)
     })
 
+    it('lets a failed proposal be raised again', async () => {
+        const failedRule = { ...rule, title: 'Failed checklist', instruction: 'Every draft is spellchecked before it goes out.' }
+        const first = parse(await propose(otherSession, failedRule))
+        expect(first.status).toBe('shown')
+        const rows = await listSessionSkillProposals(id, 'session-2')
+        expect(rows).toHaveLength(1)
+        await transitionSkillProposal(id, rows[0].id, ['proposed'], 'failed')
+
+        const second = parse(await propose(otherSession, failedRule))
+        expect(second.status).toBe('shown')
+        expect(second.proposalId).not.toBe(first.proposalId)
+    })
+
     it('saves proposals whose bridge request ids repeat across runs', async () => {
         const firstRun = runOn('session-run-1', 'claude-sub', 'claude', 'claude-opus-5-5', { skillProposals: [] })
         const secondRun = runOn('session-run-2', 'claude-sub', 'claude', 'claude-opus-5-5', { skillProposals: [] })
