@@ -115,6 +115,22 @@ describe('skill_propose', () => {
         expect(announced).toHaveLength(2)
     })
 
+    it('lets a failed proposal be raised again', async () => {
+        const failedRule = { mode: 'create', slug: null, title: 'Review checklist', summary: 'Every change gets a second pair of eyes', instruction: 'Every change gets a second pair of eyes before it merges.' }
+        const session = runOn('session-failed', 'claude-sub', 'claude', 'claude-opus-5-5', { skillProposals: [] })
+        const first = parse(await propose(session, failedRule))
+        expect(first.status).toBe('shown')
+        const rows = await listSessionSkillProposals(id, 'session-failed')
+        expect(rows).toHaveLength(1)
+        await transitionSkillProposal(id, rows[0].id, ['proposed'], 'accepted')
+        await transitionSkillProposal(id, rows[0].id, ['accepted'], 'failed', { error: 'No object generated' })
+
+        const again = parse(await propose(runOn('session-failed-again', 'claude-sub', 'claude', 'claude-opus-5-5', { skillProposals: [] }), failedRule))
+        expect(again.status).toBe('shown')
+        expect(again.proposalId).not.toBe(first.proposalId)
+        expect(await listSessionSkillProposals(id, 'session-failed-again')).toHaveLength(1)
+    })
+
     it('saves proposals whose bridge request ids repeat across runs', async () => {
         const firstRun = runOn('session-run-1', 'claude-sub', 'claude', 'claude-opus-5-5', { skillProposals: [] })
         const secondRun = runOn('session-run-2', 'claude-sub', 'claude', 'claude-opus-5-5', { skillProposals: [] })
